@@ -2,6 +2,8 @@
 
 This Streamlit dashboard provides an interactive platform to explore key economic indicators sourced from the FRED (Federal Reserve Economic Data) API. Users can select various data series and filter by date range to visualize historical trends and gain insights into macroeconomic movements.
 
+**[Click here to open the Dashboard!](https://publicdataviz-belohith.streamlit.app/)**
+
 ## ✨ Features
 
 * **Multi-Series Data Visualization:** Choose from a curated list of economic indicators (e.g., Federal Funds Rate, Real GDP, Unemployment Rate, CPI, 10-Year Treasury Yield).
