@@ -1,106 +1,82 @@
 import streamlit as st
 import pandas as pd
-import requests
 import plotly.express as px
-from datetime import datetime
+import requests
+import json # You might need this if FRED returns JSON, though requests usually handles it.
 
 # --- Configuration ---
-FRED_API_BASE_URL = "https://api.stlouisfed.org/fred/series/observations"
+# FRED API Key (retrieved securely via Streamlit secrets)
+FRED_API_KEY = st.secrets["FRED_API_KEY"]
+FRED_BASE_URL = "https://api.stlouisfed.org/fred/series/observations"
 
-# IMPORTANT: Ensure your FRED_API_KEY is in your .streamlit/secrets.toml file.
-# Example:
-# FRED_API_KEY = "YOUR_ACTUAL_FRED_API_KEY_HERE"
-
-# Define multiple FRED Series IDs and their display names
-FRED_SERIES = {
-    "Federal Funds Rate (DFF)": {
+# Define the economic indicators you want to display
+# Key is the user-friendly name, value is a dictionary with FRED Series ID and description
+ECONOMIC_INDICATORS = {
+    "Federal Funds Rate": {
         "id": "DFF",
-        "units": "Percent (%)",
-        "frequency": "Daily",
-        "description": "The Federal Funds Rate is a key interest rate in the U.S. economy, set by the Federal Reserve. It influences other interest rates.",
-        "link": "https://fred.stlouisfed.org/series/DFF"
+        "description": "The effective federal funds rate, representing the target interest rate set by the Federal Open Market Committee (FOMC)."
     },
-    "Real GDP (GDPC1)": {
+    "Real Gross Domestic Product (GDP)": {
         "id": "GDPC1",
-        "units": "Billions of Chained 2017 Dollars",
-        "frequency": "Quarterly",
-        "description": "Real Gross Domestic Product (GDP) is the value of the goods and services produced by an economy, adjusted for inflation.",
-        "link": "https://fred.stlouisfed.org/series/GDPC1"
+        "description": "Real GDP, measuring the value of goods and services produced in the U.S. in constant dollars, adjusted for inflation."
     },
-    "Unemployment Rate (UNRATE)": {
+    "Unemployment Rate": {
         "id": "UNRATE",
-        "units": "Percent (%)",
-        "frequency": "Monthly",
-        "description": "The Unemployment Rate represents the percentage of the labor force that is unemployed.",
-        "link": "https://fred.stlouisfed.org/series/UNRATE"
+        "description": "The percentage of the labor force that is unemployed."
     },
-    "CPI (CPIAUCSL)": {
+    "Consumer Price Index (CPI)": {
         "id": "CPIAUCSL",
-        "units": "Index (1982-84=100)",
-        "frequency": "Monthly",
-        "description": "The Consumer Price Index (CPI) measures the average change over time in the prices paid by urban consumers for a market basket of consumer goods and services.",
-        "link": "https://fred.stlouisfed.org/series/CPIAUCSL"
+        "description": "A measure of the average change over time in the prices paid by urban consumers for a market basket of consumer goods and services."
     },
-    "10-Year Treasury Yield (DGS10)": {
+    "10-Year Treasury Yield": {
         "id": "DGS10",
-        "units": "Percent (%)",
-        "frequency": "Daily",
-        "description": "Market yield on U.S. Treasury securities at 10-year constant maturity.",
-        "link": "https://fred.stlouisfed.org/series/DGS10"
+        "description": "The yield on the 10-Year Treasury Constant Maturity, widely used as a benchmark for mortgage rates and other interest rates."
     }
 }
 
 # --- Data Fetching Function ---
-@st.cache_data(ttl=3600) # Cache data for 1 hour to avoid re-fetching
-def fetch_fred_data(series_id):
-    """
-    Fetches economic data from the FRED API for a given series ID.
-    Reads API key from Streamlit secrets.
-    Returns a Pandas DataFrame.
-    """
-    try:
-        api_key = st.secrets["FRED_API_KEY"]
-    except KeyError:
-        st.error("FRED API Key not found. Please add FRED_API_KEY to your .streamlit/secrets.toml file.")
-        return pd.DataFrame()
-
+@st.cache_data(ttl=3600) # Cache data for 1 hour
+def fetch_fred_data(series_id, api_key, start_date=None, end_date=None):
     params = {
         "series_id": series_id,
-        "file_type": "json",
         "api_key": api_key,
-        "observation_start": "1950-01-01" # Fetch data from a sufficiently early date
+        "file_type": "json",
+        "observation_start": start_date,
+        "observation_end": end_date
     }
-    
     try:
-        response = requests.get(FRED_API_BASE_URL, params=params, timeout=15)
-        response.raise_for_status() # Raise an exception for HTTP errors (like 400 Bad Request)
+        response = requests.get(FRED_BASE_URL, params=params)
+        response.raise_for_status() # Raise an HTTPError for bad responses (4xx or 5xx)
         data = response.json()
 
-        if data and 'observations' in data:
-            df = pd.DataFrame(data['observations'])
-            
-            # --- Data Cleaning & Preprocessing ---
-            df['date'] = pd.to_datetime(df['date'])
-            df['value'] = pd.to_numeric(df['value'], errors='coerce') # 'coerce' turns '.' into NaN
+        observations = data.get("observations", [])
+        df = pd.DataFrame(observations)
 
-            df.dropna(subset=['value'], inplace=True)
+        if not df.empty:
+            df['date'] = pd.to_datetime(df['date'])
+            # Convert '.' (missing values in FRED) to NaN
+            df['value'] = pd.to_numeric(df['value'], errors='coerce')
             df.set_index('date', inplace=True)
-            
-            return df
+            df.sort_index(inplace=True) # Ensure chronological order
+            return df['value']
         else:
-            st.error(f"No observations found for series ID: {series_id}. Check series ID or API key.")
-            return pd.DataFrame()
+            return pd.Series(dtype='float64') # Return empty series if no data
+
     except requests.exceptions.RequestException as e:
-        st.error(f"Failed to fetch data from FRED API: {e}. Ensure your FRED API key is valid and check your network connection.")
-        return pd.DataFrame()
+        st.error(f"Error fetching data for {series_id}: {e}")
+        return pd.Series(dtype='float64')
+    except json.JSONDecodeError as e:
+        st.error(f"Error decoding JSON for {series_id}: {e}")
+        return pd.Series(dtype='float64')
     except Exception as e:
-        st.error(f"An unexpected error occurred: {e}")
-        return pd.DataFrame()
+        st.error(f"An unexpected error occurred for {series_id}: {e}")
+        return pd.Series(dtype='float64')
+
 
 # --- Main Streamlit Application ---
 def main():
     st.set_page_config(
-        page_title="Public Data Visualizer Dashboard",
+        page_title="Public Data Visualizer",
         page_icon="📊",
         layout="wide"
     )
@@ -108,98 +84,90 @@ def main():
     st.title("📊 Public Data Visualizer Dashboard")
 
     st.markdown("""
-    Explore key economic indicators from the FRED (Federal Reserve Economic Data) API.
-    Select a series from the sidebar to visualize its historical trend.
+    Explore key economic indicators with interactive charts.
     """)
 
-    # --- Sidebar Controls ---
-    st.sidebar.header("Data Selection")
+    # --- ADD THIS NEW DISCLAIMER HERE ---
+    st.info("""
+    **Important Note:** This dashboard visualizes macroeconomic data fetched directly from the **FRED (Federal Reserve Economic Data) API**.
+    Please be aware that economic data often has reporting lags (e.g., monthly, quarterly updates).
+    The charts reflect the most current data available via the FRED API.
+    Future updates may include additional indicators and data sources.
+    """)
+    # --- END OF DISCLAIMER ---
 
-    # Selectbox for choosing the data series
-    selected_series_name = st.sidebar.selectbox(
-        "Choose an Economic Indicator:",
-        options=list(FRED_SERIES.keys())
+
+    st.sidebar.header("Select Indicator & Date Range")
+
+    selected_indicator_name = st.sidebar.selectbox(
+        "Choose an Economic Indicator",
+        list(ECONOMIC_INDICATORS.keys())
     )
-    
-    selected_series_info = FRED_SERIES[selected_series_name]
-    selected_series_id = selected_series_info["id"]
 
-    # --- Date Range Filter ---
-    st.sidebar.subheader("Date Range")
-    
-    # Set default start date (e.g., 20 years ago)
-    default_start_date = datetime(max(1950, datetime.now().year - 20), 1, 1).date()
-    default_end_date = datetime.now().date()
+    selected_indicator_info = ECONOMIC_INDICATORS[selected_indicator_name]
+    series_id = selected_indicator_info["id"]
+    description = selected_indicator_info["description"]
 
-    start_date = st.sidebar.date_input("Start Date:", value=default_start_date)
-    end_date = st.sidebar.date_input("End Date:", value=default_end_date)
+    # Date Range selection
+    today = pd.to_datetime("today").date()
+    default_start_date = today - pd.DateOffset(years=10) # Default to last 10 years
 
-    if start_date > end_date:
-        st.sidebar.error("Error: End Date cannot be before Start Date.")
-        return # Stop execution if dates are invalid
+    col1, col2 = st.sidebar.columns(2)
+    with col1:
+        start_date = st.date_input("Start Date", value=default_start_date)
+    with col2:
+        end_date = st.date_input("End Date", value=today)
 
-    # --- Data Fetching and Display ---
-    st.subheader(f"Historical Trend: {selected_series_name}")
-    st.info(f"**Description:** {selected_series_info['description']}")
-    st.info(f"**Frequency:** {selected_series_info['frequency']} | **Units:** {selected_series_info['units']}")
-    st.markdown(f"**Source:** [FRED - {selected_series_name}]({selected_series_info['link']})")
+    if start_date >= end_date:
+        st.sidebar.error("Error: End Date must be after Start Date.")
+        return
+
+    st.subheader(f"{selected_indicator_name} Trends")
+    st.markdown(f"*{description}*")
 
 
-    with st.spinner(f"Fetching data for {selected_series_name} from FRED..."):
-        df = fetch_fred_data(selected_series_id)
+    with st.spinner(f"Fetching data for {selected_indicator_name}..."):
+        data_series = fetch_fred_data(series_id, FRED_API_KEY, start_date.strftime("%Y-%m-%d"), end_date.strftime("%Y-%m-%d"))
 
-    if not df.empty:
-        # Filter DataFrame by selected date range
-        df_filtered = df.loc[start_date.isoformat():end_date.isoformat()]
+    if not data_series.empty:
+        # Create a DataFrame for Plotly, ensuring 'date' is a column
+        plot_df = data_series.reset_index()
+        plot_df.columns = ['Date', 'Value'] # Rename columns for clarity
 
-        if df_filtered.empty:
-            st.warning("No data available for the selected date range. Please adjust your dates.")
-        else:
-            st.success(f"Data for {selected_series_name} fetched and filtered successfully!")
-            
-            # --- Plotly Visualization (Line Chart) ---
-            fig = px.line(
-                df_filtered,
-                x=df_filtered.index, # Date is the index
-                y='value',
-                title=f'{selected_series_name} Over Time',
-                labels={'date': 'Date', 'value': selected_series_info['units']},
-                line_shape='linear' # 'linear' or 'hv' for step-like data
-            )
-            
-            # Customize layout for better readability and interactivity
-            fig.update_layout(
-                hovermode="x unified", # Shows all values on a single x-coordinate hover
-                title_x=0.5, # Center title
-                xaxis_title="Date",
-                yaxis_title=f"{selected_series_info['units']}",
-                template="plotly_white", # Clean background
-                height=500 # Set a fixed height
-            )
-            
-            # Add date range selectors to the x-axis for quick navigation
-            fig.update_xaxes(
-                rangeselector_buttons=list([
+        fig = px.line(
+            plot_df,
+            x='Date',
+            y='Value',
+            title=f'{selected_indicator_name} Historical Data',
+            labels={'Value': selected_indicator_name, 'Date': 'Date'},
+            template='plotly_white'
+        )
+
+        fig.update_layout(hovermode="x unified") # Shows all traces on hover
+        fig.update_xaxes(
+            rangeslider_visible=True,
+            rangeselector=dict(
+                buttons=list([
                     dict(count=1, label="1m", step="month", stepmode="backward"),
                     dict(count=6, label="6m", step="month", stepmode="backward"),
                     dict(count=1, label="1y", step="year", stepmode="backward"),
                     dict(count=5, label="5y", step="year", stepmode="backward"),
                     dict(step="all")
-                ]),
-                rangeslider_visible=True, # Show the range slider at the bottom
-                # type="date" # Ensure x-axis is treated as date
+                ])
             )
-            
-            st.plotly_chart(fig, use_container_width=True)
+        )
+        st.plotly_chart(fig, use_container_width=True)
 
-            # Optional: Display raw data preview (collapsible)
-            with st.expander("View Raw Data Preview"):
-                st.dataframe(df_filtered.head())
-                st.write(f"Showing {len(df_filtered)} data points.")
+        st.subheader("Raw Data (First 10 Rows)")
+        st.dataframe(plot_df.head(10))
 
+        st.markdown(
+            f"Data Source: [FRED API - {selected_indicator_name}]({FRED_BASE_URL.replace('/series/observations', '')}/series/{series_id})"
+        )
 
     else:
-        st.warning(f"Could not load data for {selected_series_name}. Please ensure your FRED API key is correctly set in .streamlit/secrets.toml and try again.")
+        st.warning(f"No data available for '{selected_indicator_name}' in the selected date range, or an error occurred.")
+
 
 if __name__ == "__main__":
     main()
