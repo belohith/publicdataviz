@@ -39,10 +39,10 @@ This Streamlit dashboard provides an interactive platform to explore key economi
 
 1.  **Clone the repository:**
     ```bash
-    git clone [https://github.com/YourGitHubUsername/public-data-visualizer.git](https://github.com/YourGitHubUsername/public-data-visualizer.git)
-    cd public-data-visualizer
+    git clone [https://github.com/belohith/publicdataviz](https://github.com/belohith/publicdataviz)
+    cd publicdataviz
     ```
-    (Replace `YourGitHubUsername` with your actual GitHub username and adjust repo name if different.)
+
 
 2.  **Create a virtual environment:**
     ```bash
